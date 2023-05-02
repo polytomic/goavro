@@ -37,6 +37,24 @@ func TestUnion(t *testing.T) {
 	testBinaryEncodeFail(t, `[{"type":"enum","name":"colors","symbols":["red","green","blue"]},{"type":"enum","name":"animals","symbols":["dog","cat"]}]`, Union("animals", "bravo"), "value ought to be member of symbols")
 	testBinaryCodecPass(t, `[{"type":"enum","name":"colors","symbols":["red","green","blue"]},{"type":"enum","name":"animals","symbols":["dog","cat"]}]`, Union("colors", "green"), []byte{0, 2})
 	testBinaryCodecPass(t, `[{"type":"enum","name":"colors","symbols":["red","green","blue"]},{"type":"enum","name":"animals","symbols":["dog","cat"]}]`, Union("animals", "cat"), []byte{2, 2})
+
+	// Non-null int (int)
+	testBinaryEncodePass(t, `["null","int"]`, 3, []byte("\x02\x06"))
+	// Non-null int (long)
+	testBinaryEncodePass(t, `["null","long"]`, 3, []byte("\x02\x06"))
+	// Null int
+	testBinaryEncodePass(t, `["null","int"]`, nil, []byte("\x00"))
+	// Null string
+	testBinaryEncodePass(t, `["null","string"]`, nil, []byte("\x00"))
+	// Non-null string
+	testBinaryEncodePass(t, `["null","string"]`, "foo", []byte("\x02\x06foo"))
+	// Null bytes
+	testBinaryEncodePass(t, `["null","bytes"]`, nil, []byte("\x00"))
+	// Non-null bytes
+	testBinaryEncodePass(t, `["null","bytes"]`, []byte("foo"), []byte("\x02\x06foo"))
+
+	// Bad union type
+	testBinaryEncodeFail(t, `["null","int"]`, "foo", "cannot encode binary union: no member schema types support datum: allowed types: [null int]")
 }
 
 func TestUnionRejectInvalidType(t *testing.T) {

@@ -137,6 +137,28 @@ func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([
 				buf, _ = longBinaryFromNative(buf, index)
 				return c.binaryFromNative(buf, value)
 			}
+		default:
+			// Loop through all allowed types, attempting to encode datum
+			// with each type, until we find a type that works.
+			// If we don't find a type that works, return an error.
+			for _, name := range cr.allowedTypes {
+				c := cr.codecFromName[name]
+				index, ok := cr.indexFromName[name]
+				if !ok {
+					return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
+				}
+				buf, err := longBinaryFromNative(buf, index)
+				if err != nil {
+					continue
+				}
+				buf, err = c.binaryFromNative(buf, datum)
+				if err != nil {
+					continue
+				}
+				return buf, err
+			}
+			return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
+
 		}
 		return nil, fmt.Errorf("cannot encode binary union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
 	}
