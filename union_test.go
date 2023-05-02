@@ -53,8 +53,15 @@ func TestUnion(t *testing.T) {
 	// Non-null bytes
 	testBinaryEncodePass(t, `["null","bytes"]`, []byte("foo"), []byte("\x02\x06foo"))
 
-	// Bad union type
-	testBinaryEncodeFail(t, `["null","int"]`, "foo", "cannot encode binary union: no member schema types support datum: allowed types: [null int]")
+	// Null array
+	testBinaryEncodePass(t, `["null",{"type":"array","items":"int"}]`, nil, []byte("\x00"))
+	// Empty array
+	testBinaryEncodePass(t, `["null",{"type":"array","items":"int"}]`, []interface{}{}, []byte("\x02\x00"))
+	// Empty array of records
+	testBinaryEncodePass(t, `["null",{"type":"array","items":{"type":"record","name":"r1","fields":[{"name":"f1","type":"int"}]}}]`, []interface{}{}, []byte("\x02\x00"))
+
+	// Bad union type with null fallback
+	testBinaryEncodePass(t, `["null","int"]`, "foo", []byte("\x00"))
 }
 
 func TestUnionRejectInvalidType(t *testing.T) {
