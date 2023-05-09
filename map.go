@@ -286,7 +286,11 @@ func convertMap(datum interface{}) (map[string]interface{}, error) {
 	// convenience to client.
 	v := reflect.ValueOf(datum)
 	if v.Kind() != reflect.Map {
-		return nil, fmt.Errorf("cannot create map[string]interface{}: expected map[string]...; received: %T", datum)
+		if datum == nil {
+			datum = map[string]interface{}{}
+		} else {
+			return nil, fmt.Errorf("cannot create map[string]interface{}: expected map[string]...; received: %T", datum)
+		}
 	}
 	// NOTE: Two better alternatives to the current algorithm are:
 	//   (1) mutate the reflection tuple underneath to convert the

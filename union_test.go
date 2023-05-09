@@ -62,6 +62,9 @@ func TestUnion(t *testing.T) {
 
 	// Bad union type with null fallback
 	testBinaryEncodePass(t, `["null","int"]`, "foo", []byte("\x00"))
+
+	// Null record
+	testBinaryEncodePass(t, `["null",{"type":"record","name":"r1","fields":[{"name":"f1","type": "record","name":"r2","fields":[{"name":"f2","type":"int"}]}]}]`, nil, []byte("\x00"))
 }
 
 func TestUnionRejectInvalidType(t *testing.T) {

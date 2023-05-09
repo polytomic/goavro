@@ -26,6 +26,8 @@ type codecInfo struct {
 	indexFromName  map[string]int
 }
 
+type UnionType map[string]interface{}
+
 // Union wraps a datum value in a map for encoding as a Union, as required by
 // Union encoder.
 //
@@ -51,7 +53,7 @@ func Union(name string, datum interface{}) interface{} {
 	if datum == nil && name == "null" {
 		return nil
 	}
-	return map[string]interface{}{name: datum}
+	return UnionType(map[string]interface{}{name: datum})
 }
 
 // makeCodecInfo takes the schema array
@@ -123,7 +125,7 @@ func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([
 				return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
 			}
 			return longBinaryFromNative(buf, index)
-		case map[string]interface{}:
+		case UnionType:
 			if len(v) != 1 {
 				return nil, fmt.Errorf("cannot encode binary union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
 			}

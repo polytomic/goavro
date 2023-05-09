@@ -136,7 +136,11 @@ func makeRecordCodec(st map[string]*Codec, enclosingNamespace string, schemaMap 
 	c.binaryFromNative = func(buf []byte, datum interface{}) ([]byte, error) {
 		valueMap, ok := datum.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("cannot encode binary record %q: expected map[string]interface{}; received: %T", c.typeName, datum)
+			if datum == nil {
+				datum = map[string]interface{}{}
+			} else {
+				return nil, fmt.Errorf("cannot encode binary record %q: expected map[string]interface{}; received: %T", c.typeName, datum)
+			}
 		}
 
 		// records encoded in order fields were defined in schema
