@@ -160,20 +160,6 @@ func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([
 				return buf, err
 			}
 
-			// If we can encode datum with none of the allowed types, see if null is allowed.
-			// If null is allowed, encode datum as null.
-			// If null is not allowed, return an error.
-			if idx, ok := cr.indexFromName["null"]; ok {
-				// Overwrite datum with nil, so that we encode it as null.
-				datum = nil
-				c := cr.codecFromName["null"]
-				buf, err := longBinaryFromNative(buf, idx)
-				if err != nil {
-					return nil, err
-				}
-				return c.binaryFromNative(buf, datum)
-			}
-
 			return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
 
 		}
