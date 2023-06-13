@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	showCount  = flag.Bool("count", false, "show count of data items")
-	showSchema = flag.Bool("schema", false, "show data schema")
+	showCount    = flag.Bool("count", false, "show count of data items")
+	showSchema   = flag.Bool("schema", false, "show data schema")
+	printRecords = flag.Bool("records", false, "print records")
 )
 
 func usage() {
@@ -85,13 +86,16 @@ func headerFromReader(ior io.Reader, prefix string) error {
 	var decoded, errors int
 
 	for ocfr.Scan() {
-		_, err := ocfr.Read()
+		datatum, err := ocfr.Read()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			errors++
 			continue
 		}
 		decoded++
+		if *printRecords {
+			fmt.Printf("%s%v\n", prefix, datatum)
+		}
 	}
 
 	if decoded > 0 {
