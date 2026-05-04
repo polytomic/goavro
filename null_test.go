@@ -16,11 +16,14 @@ func TestSchemaPrimitiveNullCodec(t *testing.T) {
 }
 
 func TestPrimitiveNullBinary(t *testing.T) {
-	testBinaryEncodeFailBadDatumType(t, `"null"`, false)
+	// The null codec returns a package-level sentinel rather than a
+	// formatted error; the union encoder constructs its own diagnostic
+	// (with the received type) when no member codec accepts the datum.
+	testBinaryEncodeFail(t, `"null"`, false, "expected: Go nil")
 	testBinaryCodecPass(t, `"null"`, nil, nil)
 }
 
 func TestPrimitiveNullText(t *testing.T) {
-	testTextEncodeFailBadDatumType(t, `"null"`, false)
+	testTextEncodeFail(t, `"null"`, false, "expected: Go nil")
 	testTextCodecPass(t, `"null"`, nil, []byte("null"))
 }
