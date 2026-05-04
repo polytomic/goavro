@@ -18,11 +18,23 @@ import (
 
 var nullBytes = []byte("null")
 
+// errBinaryNullExpected and errTextualNullExpected are returned by the null
+// codecs when a non-nil datum is supplied. They are package-level sentinels
+// rather than per-call fmt.Errorf values because the union encoder's default
+// dispatch tries each member codec in turn and discards the error on miss; for
+// the common ["null", T] union shape, every non-null value would otherwise pay
+// a fmt.Errorf allocation. The union encoder constructs its own diagnostic
+// (including the received type) when no member codec accepts the datum.
+var (
+	errBinaryNullExpected  = errors.New("cannot encode binary null: expected: Go nil")
+	errTextualNullExpected = errors.New("cannot encode textual null: expected: Go nil")
+)
+
 func nullNativeFromBinary(buf []byte) (interface{}, []byte, error) { return nil, buf, nil }
 
 func nullBinaryFromNative(buf []byte, datum interface{}) ([]byte, error) {
 	if datum != nil {
-		return nil, fmt.Errorf("cannot encode binary null: expected: Go nil; received: %T", datum)
+		return nil, errBinaryNullExpected
 	}
 	return buf, nil
 }
@@ -39,7 +51,7 @@ func nullNativeFromTextual(buf []byte) (interface{}, []byte, error) {
 
 func nullTextualFromNative(buf []byte, datum interface{}) ([]byte, error) {
 	if datum != nil {
-		return nil, fmt.Errorf("cannot encode textual null: expected: Go nil; received: %T", datum)
+		return nil, errTextualNullExpected
 	}
 	return append(buf, nullBytes...), nil
 }
