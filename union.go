@@ -24,6 +24,23 @@ type codecInfo struct {
 	codecFromIndex []*Codec
 	codecFromName  map[string]*Codec
 	indexFromName  map[string]int
+
+	// Fast-path metadata for the common ["null", T] / [T, "null"] union
+	// shape. Destination schemas are dominated by nullable scalar fields, so
+	// the binary encoder does redundant work per record and per field: a
+	// type-switch, a map lookup for the null index, a varint encode for the
+	// index, and (for non-nil values) a discarded attempt to encode the
+	// datum with the null codec before falling through to the value codec.
+	// When the union has exactly two members and one is "null", we cache
+	// enough state here to skip all of that work.
+	//
+	// The varint zigzag encoding of indices 0 and 1 fits in a single byte
+	// (0x00 and 0x02 respectively), so the pre-encoded index is stored
+	// inline rather than as a slice.
+	nullableFast   bool
+	nullIndexByte  byte
+	valueIndexByte byte
+	valueCodec     *Codec
 }
 
 type UnionType map[string]interface{}
@@ -80,13 +97,30 @@ func makeCodecInfo(st map[string]*Codec, enclosingNamespace string, schemaArray 
 		indexFromName[fullName] = i
 	}
 
-	return codecInfo{
+	ci := codecInfo{
 		allowedTypes:   allowedTypes,
 		codecFromIndex: codecFromIndex,
 		codecFromName:  codecFromName,
 		indexFromName:  indexFromName,
-	}, nil
+	}
 
+	// Detect the ["null", T] / [T, "null"] shape and pre-resolve the value
+	// codec. See the codecInfo type comment for motivation. We hold the
+	// *Codec pointer rather than its binaryFromNative func because recursive
+	// schemas register their codec early (with nil function fields) and
+	// patch them in later; capturing the func too eagerly would snapshot a
+	// nil that never updates.
+	if len(allowedTypes) == 2 {
+		if nullIdx, hasNull := indexFromName["null"]; hasNull {
+			valueIdx := 1 - nullIdx
+			ci.nullableFast = true
+			ci.nullIndexByte = byte(nullIdx << 1) // varint zigzag of 0 or 1
+			ci.valueIndexByte = byte(valueIdx << 1)
+			ci.valueCodec = codecFromIndex[valueIdx]
+		}
+	}
+
+	return ci, nil
 }
 
 func unionNativeFromBinary(cr *codecInfo) func(buf []byte) (interface{}, []byte, error) {
@@ -116,8 +150,30 @@ func unionNativeFromBinary(cr *codecInfo) func(buf []byte) (interface{}, []byte,
 		return Union(cr.allowedTypes[index], decoded), buf, nil
 	}
 }
+
+// nullableFastPathDisabled is a test-only knob that forces the union encoder
+// to take the slow path even for ["null", T] unions. It exists so the
+// byte-identity tests can drive both paths from a single code base. Production
+// code never touches it.
+var nullableFastPathDisabled bool
+
 func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([]byte, error) {
 	return func(buf []byte, datum interface{}) ([]byte, error) {
+		// Fast path for ["null", T] / [T, "null"] unions. UnionType-wrapped
+		// values fall through to the existing branch so callers using
+		// goavro.Union(name, val) keep their semantics, including the case
+		// where the wrapper specifies the wrong member type.
+		if cr.nullableFast && !nullableFastPathDisabled {
+			if datum == nil {
+				return append(buf, cr.nullIndexByte), nil
+			}
+			if _, isWrapped := datum.(UnionType); !isWrapped {
+				out, err := cr.valueCodec.binaryFromNative(append(buf, cr.valueIndexByte), datum)
+				if err == nil {
+					return out, nil
+				}
+			}
+		}
 		switch v := datum.(type) {
 		case nil:
 			index, ok := cr.indexFromName["null"]
