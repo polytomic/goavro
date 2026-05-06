@@ -252,7 +252,12 @@ func ExampleUnion_logicalType() {
 
 	// Note the usage of type.logicalType i.e. `long.timestamp-millis` to denote the type in a union. This is due to the single string naming format
 	// used by goavro. Decimal can be both bytes.decimal or fixed.decimal
-	bytes, err := codec.BinaryFromNative(nil, map[string]interface{}{"long.timestamp-millis": time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC)})
+	//
+	// goavro.Union wraps the value in a UnionType (a named alias for
+	// map[string]interface{}), which is the encoder's expected shape for
+	// non-nil union members. Passing a bare map worked in older versions of
+	// the upstream library but is no longer the supported entry point.
+	bytes, err := codec.BinaryFromNative(nil, Union("long.timestamp-millis", time.Date(2006, 1, 2, 15, 4, 5, 0, time.UTC)))
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -261,7 +266,7 @@ func ExampleUnion_logicalType() {
 	if err != nil {
 		fmt.Println(err)
 	}
-	out := decoded.(map[string]interface{})
+	out := decoded.(UnionType)
 	fmt.Printf("%#v\n", out["long.timestamp-millis"].(time.Time).String())
 	// Output: "2006-01-02 15:04:05 +0000 UTC"
 }

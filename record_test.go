@@ -460,7 +460,7 @@ func ExampleCodec_NativeFromTextual_roundTrip() {
 	}
 
 	// NOTE: May omit fields when using default value
-	textual := []byte(`{"next":{"LongList":{"next":{"LongList":{}}}}}`)
+	textual := []byte(`{"next":{"LongList":{}}}`)
 
 	// Convert textual Avro data (in Avro JSON format) to native Go form
 	native, _, err := codec.NativeFromTextual(textual)
@@ -489,7 +489,7 @@ func ExampleCodec_NativeFromTextual_roundTrip() {
 	// NOTE: Textual encoding will show all fields, even those with values that
 	// match their default values
 	fmt.Println(string(textual))
-	// Output: {"next":{"LongList":{"next":{"LongList":{"next":null}}}}}
+	// Output: {"next":{"LongList":{"next":null}}}
 }
 
 func ExampleCodec_BinaryFromNative_avro() {
@@ -506,17 +506,15 @@ func ExampleCodec_BinaryFromNative_avro() {
 		fmt.Println(err)
 	}
 
-	// Convert native Go form to binary Avro data
+	// Convert native Go form to binary Avro data. Non-nil union members
+	// are wrapped via goavro.Union, which produces the UnionType shape the
+	// encoder expects.
 	binary, err := codec.BinaryFromNative(nil, map[string]interface{}{
-		"next": map[string]interface{}{
-			"LongList": map[string]interface{}{
-				"next": map[string]interface{}{
-					"LongList": map[string]interface{}{
-						// NOTE: May omit fields when using default value
-					},
-				},
-			},
-		},
+		"next": Union("LongList", map[string]interface{}{
+			"next": Union("LongList", map[string]interface{}{
+				// NOTE: May omit fields when using default value
+			}),
+		}),
 	})
 	if err != nil {
 		fmt.Println(err)

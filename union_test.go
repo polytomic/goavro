@@ -60,18 +60,35 @@ func TestUnion(t *testing.T) {
 	// Empty array of records
 	testBinaryEncodePass(t, `["null",{"type":"array","items":{"type":"record","name":"r1","fields":[{"name":"f1","type":"int"}]}}]`, []interface{}{}, []byte("\x02\x00"))
 
-	// Bad union type with null fallback
-	testBinaryEncodePass(t, `["null","int"]`, "foo", []byte("\x00"))
+	// A bare value whose type does not match any non-null union member is
+	// rejected. Earlier fork commits silently substituted null; that
+	// behavior was reverted in c06b567 ("Do not default to writing nil")
+	// because masking encode failures led to data loss in writers.
+	testBinaryEncodeFail(t, `["null","int"]`, "foo", "received: string")
 
 	// Null record
 	testBinaryEncodePass(t, `["null",{"type":"record","name":"r1","fields":[{"name":"f1","type": "record","name":"r2","fields":[{"name":"f2","type":"int"}]}]}]`, nil, []byte("\x00"))
 }
 
 func TestUnionRejectInvalidType(t *testing.T) {
-	testBinaryEncodeFailBadDatumType(t, `["null","long"]`, 3)
-	testBinaryEncodeFailBadDatumType(t, `["null","int","long","float"]`, float64(3.5))
+	// Wrapped Union values whose type name is not a member of the schema
+	// are still rejected: the wrapper carries an explicit intent that the
+	// schema cannot satisfy.
 	testBinaryEncodeFailBadDatumType(t, `["null","long"]`, Union("int", 3))
 	testBinaryEncodeFailBadDatumType(t, `["null","int","long","float"]`, Union("double", float64(3.5)))
+}
+
+// TestUnionAcceptsBareValueWhenCoercible documents the fork's permissive
+// behavior (commit 2713cfe, "Improve union handling") for unwrapped values.
+// When a bare datum is coercible to one of the non-null members, the encoder
+// picks the first member that accepts it. This lets writers pass typed values
+// straight through without manually wrapping them in goavro.Union.
+func TestUnionAcceptsBareValueWhenCoercible(t *testing.T) {
+	// `int` (Go type) coerces into Avro `long`.
+	testBinaryEncodePass(t, `["null","long"]`, 3, []byte("\x02\x06"))
+	// `float64(3.5)` cannot fit into int or long without precision loss, so
+	// the encoder skips them and lands on float.
+	testBinaryEncodePass(t, `["null","int","long","float"]`, float64(3.5), []byte("\x06\x00\x00\x60\x40"))
 }
 
 func TestUnionWillCoerceTypeIfPossible(t *testing.T) {
@@ -139,9 +156,13 @@ func TestUnionMapRecordFitsInRecord(t *testing.T) {
 		t.Errorf("GOT: %#v; WANT: %#v", actual, expected)
 	}
 
-	datumOutMap, ok := datumOut.(map[string]interface{})
+	// The binary decoder wraps non-nil union values via goavro.Union, which
+	// returns the named UnionType (an alias for map[string]interface{}). A
+	// bare map[string]interface{} type assertion would fail because Go does
+	// not match named types against their underlying type.
+	datumOutMap, ok := datumOut.(UnionType)
 	if !ok {
-		t.Fatalf("GOT: %#v; WANT: %#v", ok, false)
+		t.Fatalf("GOT: %T; WANT: goavro.UnionType", datumOut)
 	}
 	if actual, expected := len(datumOutMap), 1; actual != expected {
 		t.Fatalf("GOT: %#v; WANT: %#v", actual, expected)
@@ -162,6 +183,22 @@ func TestUnionMapRecordFitsInRecord(t *testing.T) {
 			t.Errorf("GOT: %#v; WANT: %#v", actual, expected)
 		}
 	}
+}
+
+func TestUnionBinaryPreservesBareMapValues(t *testing.T) {
+	testBinaryEncodePass(
+		t,
+		`["null",{"type":"record","name":"r1","fields":[{"name":"f1","type":"int"}]}]`,
+		map[string]interface{}{"f1": 3},
+		[]byte("\x02\x06"),
+	)
+
+	testBinaryEncodePass(
+		t,
+		`["null",{"type":"map","values":"string"}]`,
+		map[string]interface{}{"f1": "value1"},
+		[]byte("\x02\x02\x04f1\x0cvalue1\x00"),
+	)
 }
 
 func TestUnionRecordFieldWhenNull(t *testing.T) {

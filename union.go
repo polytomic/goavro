@@ -126,19 +126,7 @@ func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([
 			}
 			return longBinaryFromNative(buf, index)
 		case UnionType:
-			if len(v) != 1 {
-				return nil, fmt.Errorf("cannot encode binary union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
-			}
-			// will execute exactly once
-			for key, value := range v {
-				index, ok := cr.indexFromName[key]
-				if !ok {
-					return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
-				}
-				c := cr.codecFromIndex[index]
-				buf, _ = longBinaryFromNative(buf, index)
-				return c.binaryFromNative(buf, value)
-			}
+			return encodeBinaryUnionMap(cr, buf, v, datum)
 		default:
 			// Loop through all allowed types, attempting to encode datum
 			// with each type, until we find a type that works.
@@ -163,8 +151,24 @@ func unionBinaryFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([
 			return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
 
 		}
+	}
+}
+
+func encodeBinaryUnionMap(cr *codecInfo, buf []byte, v map[string]interface{}, datum interface{}) ([]byte, error) {
+	if len(v) != 1 {
 		return nil, fmt.Errorf("cannot encode binary union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
 	}
+	// will execute exactly once
+	for key, value := range v {
+		index, ok := cr.indexFromName[key]
+		if !ok {
+			return nil, fmt.Errorf("cannot encode binary union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
+		}
+		c := cr.codecFromIndex[index]
+		buf, _ = longBinaryFromNative(buf, index)
+		return c.binaryFromNative(buf, value)
+	}
+	return nil, fmt.Errorf("cannot encode binary union: unreachable")
 }
 func unionNativeFromTextual(cr *codecInfo) func(buf []byte) (interface{}, []byte, error) {
 	return func(buf []byte) (interface{}, []byte, error) {
@@ -174,18 +178,23 @@ func unionNativeFromTextual(cr *codecInfo) func(buf []byte) (interface{}, []byte
 			}
 		}
 
-		var datum interface{}
-		var err error
-		datum, buf, err = genericMapTextDecoder(buf, nil, cr.codecFromName)
+		decoded, buf, err := genericMapTextDecoder(buf, nil, cr.codecFromName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot decode textual union: %s", err)
 		}
 
-		return datum, buf, nil
+		// Preserve the historical textual decode shape for compatibility.
+		// Binary decoding and goavro.Union use UnionType, but textual decode
+		// has long returned a plain map[string]interface{}.
+		return decoded, buf, nil
 	}
 }
 func unionTextualFromNative(cr *codecInfo) func(buf []byte, datum interface{}) ([]byte, error) {
 	return func(buf []byte, datum interface{}) ([]byte, error) {
+		// goavro.Union and the binary decoder both return UnionType, a named
+		// alias for map[string]interface{}. Go type switches don't match
+		// named types against their underlying type, so accept both shapes
+		// to keep textual encoding working alongside binary encoding.
 		switch v := datum.(type) {
 		case nil:
 			_, ok := cr.indexFromName["null"]
@@ -193,36 +202,47 @@ func unionTextualFromNative(cr *codecInfo) func(buf []byte, datum interface{}) (
 				return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
 			}
 			return append(buf, "null"...), nil
+		case UnionType:
+			return encodeTextualUnionMap(cr, buf, v)
 		case map[string]interface{}:
-			if len(v) != 1 {
-				return nil, fmt.Errorf("cannot encode textual union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
-			}
-			// will execute exactly once
-			for key, value := range v {
-				index, ok := cr.indexFromName[key]
-				if !ok {
-					return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
-				}
-				buf = append(buf, '{')
-				var err error
-				buf, err = stringTextualFromNative(buf, key)
-				if err != nil {
-					return nil, fmt.Errorf("cannot encode textual union: %s", err)
-				}
-				buf = append(buf, ':')
-				c := cr.codecFromIndex[index]
-				buf, err = c.textualFromNative(buf, value)
-				if err != nil {
-					return nil, fmt.Errorf("cannot encode textual union: %s", err)
-				}
-				return append(buf, '}'), nil
-			}
+			return encodeTextualUnionMap(cr, buf, v)
 		}
 		return nil, fmt.Errorf("cannot encode textual union: non-nil values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
 	}
 }
+
+// encodeTextualUnionMap is the shared body for the UnionType and
+// map[string]interface{} cases of unionTextualFromNative.
+func encodeTextualUnionMap(cr *codecInfo, buf []byte, v map[string]interface{}) ([]byte, error) {
+	if len(v) != 1 {
+		return nil, fmt.Errorf("cannot encode textual union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, v)
+	}
+	// will execute exactly once
+	for key, value := range v {
+		index, ok := cr.indexFromName[key]
+		if !ok {
+			return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, v)
+		}
+		buf = append(buf, '{')
+		var err error
+		buf, err = stringTextualFromNative(buf, key)
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode textual union: %s", err)
+		}
+		buf = append(buf, ':')
+		c := cr.codecFromIndex[index]
+		buf, err = c.textualFromNative(buf, value)
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode textual union: %s", err)
+		}
+		return append(buf, '}'), nil
+	}
+	return nil, fmt.Errorf("cannot encode textual union: unreachable")
+}
 func textualJSONFromNativeAvro(cr *codecInfo) func(buf []byte, datum interface{}) ([]byte, error) {
 	return func(buf []byte, datum interface{}) ([]byte, error) {
+		// See unionTextualFromNative for why both UnionType and
+		// map[string]interface{} are accepted.
 		switch v := datum.(type) {
 		case nil:
 			_, ok := cr.indexFromName["null"]
@@ -230,27 +250,36 @@ func textualJSONFromNativeAvro(cr *codecInfo) func(buf []byte, datum interface{}
 				return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
 			}
 			return append(buf, "null"...), nil
+		case UnionType:
+			return encodeTextualJSONUnionMap(cr, buf, v)
 		case map[string]interface{}:
-			if len(v) != 1 {
-				return nil, fmt.Errorf("cannot encode textual union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
-			}
-			// will execute exactly once
-			for key, value := range v {
-				index, ok := cr.indexFromName[key]
-				if !ok {
-					return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, datum)
-				}
-				var err error
-				c := cr.codecFromIndex[index]
-				buf, err = c.textualFromNative(buf, value)
-				if err != nil {
-					return nil, fmt.Errorf("cannot encode textual union: %s", err)
-				}
-				return buf, nil
-			}
+			return encodeTextualJSONUnionMap(cr, buf, v)
 		}
 		return nil, fmt.Errorf("cannot encode textual union: non-nil values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, datum)
 	}
+}
+
+// encodeTextualJSONUnionMap is the shared body for the UnionType and
+// map[string]interface{} cases of textualJSONFromNativeAvro.
+func encodeTextualJSONUnionMap(cr *codecInfo, buf []byte, v map[string]interface{}) ([]byte, error) {
+	if len(v) != 1 {
+		return nil, fmt.Errorf("cannot encode textual union: non-nil Union values ought to be specified with Go map[string]interface{}, with single key equal to type name, and value equal to datum value: %v; received: %T", cr.allowedTypes, v)
+	}
+	// will execute exactly once
+	for key, value := range v {
+		index, ok := cr.indexFromName[key]
+		if !ok {
+			return nil, fmt.Errorf("cannot encode textual union: no member schema types support datum: allowed types: %v; received: %T", cr.allowedTypes, v)
+		}
+		var err error
+		c := cr.codecFromIndex[index]
+		buf, err = c.textualFromNative(buf, value)
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode textual union: %s", err)
+		}
+		return buf, nil
+	}
+	return nil, fmt.Errorf("cannot encode textual union: unreachable")
 }
 func buildCodecForTypeDescribedBySlice(st map[string]*Codec, enclosingNamespace string, schemaArray []interface{}, cb *codecBuilder) (*Codec, error) {
 	if len(schemaArray) == 0 {
